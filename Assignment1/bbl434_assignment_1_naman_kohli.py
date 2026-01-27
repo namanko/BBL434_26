@@ -28,6 +28,8 @@ Origin of Transfer [For Conjugative Transfer]
 Spacer 4
 
 Back to Replication Core
+
+To change inputs, change the files input.fa and design.txt, keeping the names same
 """
 
 import random
