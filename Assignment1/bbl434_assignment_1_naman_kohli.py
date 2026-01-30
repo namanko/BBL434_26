@@ -11,7 +11,7 @@ The universal plasmid maker will contain the following features, assuming the on
 1. Input.fa containing DNA Sequence
 2. Design.txt containing X Restriction Enzymes with their sites and Y Antibiotic markers with names
 
-Replication Core (OriV, RepA, RepB, RepC) [Independent of Host]
+OriC [Host DnaA binds Ori and initiates replication]
 
 Spacer 1
 
@@ -27,14 +27,13 @@ Origin of Transfer [For Conjugative Transfer]
 
 Spacer 4
 
-Back to Replication Core
-
-To change inputs, change the files input.fa and design.txt, keeping the names same
+Back to OriC
 """
 
 import random
 import itertools
 
+# To read the DNA Sequence of Organism
 def read_fasta(f):
   seq = []
   with open(f,'r') as dnaf:
@@ -42,6 +41,8 @@ def read_fasta(f):
       seq.append(i.strip())
   return ''.join(seq)
 
+# To read Design file containing RE sites and Antibiotics
+# Assumption: Sequence will be provided inside this file
 def read_txt(f):
   RE = {}
   ABX = {}
@@ -54,6 +55,88 @@ def read_txt(f):
         ABX[y[1]] = y[0]
   return RE,ABX
 
+#Cumulative GC Skew calculation
+def GCSkew(genome,L,step):
+  totalskew = []
+  pos = []
+  currskew = 0
+  for i in range(0,len(genome)-L, step):
+    window = genome[i:i+L]
+    numG = 0
+    numC = 0
+    for base in window:
+      if base == 'G':
+        numG +=1
+      elif base == 'C':
+        numC +=1
+    if numG==numC==0:
+      totalskew.append(0)
+    else:
+      currskew += (numG-numC)/(numG+numC)
+      totalskew.append(currskew)
+      pos.append(i +  (L//2))
+  return pos, totalskew
+
+# Finding window of minimum GC Skew (Window containing Ori)
+def OriFinder(genome,L,step):
+  posSkew, gcSkew = GCSkew(genome,L,step)
+
+  ms = min(gcSkew)
+  mposS = posSkew[gcSkew.index(ms)]
+
+  lower = mposS - (L//2)
+  upper = mposS + (L//2) + 1
+  return genome[lower:upper]
+
+# Helper function to calculate 'AT' fraction in a given window
+def at_fraction(window):
+   at = sum(1 for b in window if b in "AT")
+   return at / len(window)
+
+# Helper function to get an idea of 'AT' fraction in a given sequence
+def genome_at_signal(genome, L=80, step=5):
+  coords = []
+  signal = []
+  for i in range(0, len(genome) - L + 1, step):
+    window = genome[i:i+L]
+    at = at_fraction(window)
+    coords.append(i + L // 2)
+    signal.append(at)
+  return coords, signal
+
+# Finds the midpoint of DNA Unwinding element of Ori
+def find_due_mid(coords, signal, delta=0.15):
+    threshold = sum(signal) / len(signal) + delta
+
+    runs = []
+    in_run = False
+    start = None
+
+    for i, val in enumerate(signal):
+        if val >= threshold:
+            if not in_run:
+                start = i
+                in_run = True
+        else:
+            if in_run:
+                runs.append((start, i - 1))
+                in_run = False
+
+    if in_run:
+        runs.append((start, len(signal) - 1))
+
+    if not runs:
+        return None
+
+    # pick longest run
+    best = max(runs, key=lambda r: coords[r[1]] - coords[r[0]])
+
+    start_i, end_i = best
+    due_mid = (coords[start_i] + coords[end_i]) // 2
+
+    return due_mid
+
+# Helper function to check if RE site is present in given sequence or not
 def creates_forbidden_site(x,y):
   for item in y:
     if item in x:
@@ -61,6 +144,7 @@ def creates_forbidden_site(x,y):
   else:
     return False
 
+# Helper function to generate random spacers of AT of given length
 def generate_spacer(length, forbidden_sites):
     spacer = ""
     while len(spacer) < length:
@@ -69,12 +153,15 @@ def generate_spacer(length, forbidden_sites):
             spacer = spacer[:-1]
     return spacer
 
+# Sequence containing all antibiotic markers
+# Assumption: all markers contain their promoter and terminator regions already
 def ab_markers(abx):
   ABXS = ""
   for AB in abx.values():
-    ABXS+=AB # Assuming that the markers contain promoter and terminator regions for each antibiotic, since we do not know in advance what the antibiotic is
+    ABXS+=AB
   return ABXS
 
+# Multiple Cloning Site containing all RE Sites
 def mcs(re):
   MCS = ""
   for RE in re.values():
@@ -84,7 +171,8 @@ def mcs(re):
     MCS+=small_spacer
   return MCS
 
-def final_plasmid_checker(OriV, RepA, RepB, RepC, ABXS, MCS, OriT,
+# Final checker function to ensure RE sites are present only once in the MCS and not anywhere else
+def final_plasmid_checker(OriC, ABXS, MCS, OriT,
                            spacer_1, spacer_2, spacer_3, spacer_4,
                            re_dict, abx_dict):
 
@@ -96,7 +184,7 @@ def final_plasmid_checker(OriV, RepA, RepB, RepC, ABXS, MCS, OriT,
         "ABXS_used": ABXS
     }
 
-    # ---------- helper wrappers (built on your code) ----------
+    # ---------- helper wrappers ----------
 
     def re_hits(seq):
         """Return list of RE sites present in seq"""
@@ -111,10 +199,7 @@ def final_plasmid_checker(OriV, RepA, RepB, RepC, ABXS, MCS, OriT,
 
     # ---------- protected regions ----------
     protected = {
-        "OriV": OriV,
-        "RepC": RepC,
-        "RepA": RepA,
-        "RepB": RepB,
+        "OriC": OriC,
         "OriT": OriT
     }
 
@@ -125,7 +210,7 @@ def final_plasmid_checker(OriV, RepA, RepB, RepC, ABXS, MCS, OriT,
                 f"Restriction site(s) {re_hits(seq)} found in protected region {name}"
             )
 
-    # ---------- antibiotic markers (reorder-only logic) ----------
+    # ---------- antibiotic markers (reordering logic) ----------
     abx_seqs = list(abx_dict.values())
     valid_ABXS = None
 
@@ -154,10 +239,7 @@ def final_plasmid_checker(OriV, RepA, RepB, RepC, ABXS, MCS, OriT,
 
     # ---------- junction checks (including circular) ----------
     blocks = [
-        OriV,
-        RepC,
-        RepA,
-        RepB,
+        OriC,
         spacer_1,
         report["ABXS_used"],
         spacer_2,
@@ -170,8 +252,8 @@ def final_plasmid_checker(OriV, RepA, RepB, RepC, ABXS, MCS, OriT,
     for i in range(len(blocks)):
         junc = junction(blocks[i], blocks[(i + 1) % len(blocks)])
         if has_RE(junc):
-            if i!=7 and i!=6:
-              blocks[i+1] = generate_spacer(3,re.values()) + blocks[i+1]
+            if i!=3 and i!=4:
+              blocks[i] += generate_spacer(3,re.values())
               new_junc = junction(blocks[i], blocks[(i + 1) % len(blocks)])
               if has_RE(new_junc):
                 report["status"] = "FAIL"
@@ -181,22 +263,25 @@ def final_plasmid_checker(OriV, RepA, RepB, RepC, ABXS, MCS, OriT,
       return ''.join(blocks)
     return report
 
-# GenBank: M35512.1 Ori from Plasmid R1162
-OriV = "CCGGGCTGAATGATCGACCGAGACAGGCCCTGCGGGGCTGCACACGCGCCCCCACCCTTCGGGTAGGGGGAAAGGCCGCTAAAGCGGCTAAAAGCGCTCCAGCGTATTTCTGCGGGGTTTGGTGTGGGGTTTAGCGGGCTTTGCCCGCCTTTCCCCCTGCCGCGCAGCGGTGGGGCGGTGTGTAGCCTAGCGCAGCGAATAGACCAGCTATCCGGCCTCTGGGCATATTGGGCAGGGCAGCAGCGCCCCACAGGGCGTGACTAACCGCGCCTAGTGGATTATTCTTAGATAATCATGGATGGATTTTTCCAACACCCCGCCAGCCCCCGCCCCTGCTGGGTTTGCAGGTTTGGGGGCGTGACAGTTATTGCAGGGGTTCGTGACAGTTATTGCAGGGGGGCGTGACAGTTATTGCAGGGGTTCGTGACAGTTAGTACGGGATGACGGGCACTGGCTGGCAATGTCTAGCAACGGCAGGCATGTCGGCTGACGGTAAAACAACTTTCCGCTAAGCGATAGACTGTATGTGAAACACAGTATTGCAAGGACGCGGAACATGCCTCATGTGGCGGCCAGGACGGCCAGCCGG"
+dna = read_fasta('./Test_Cases/input.fa')
+re,abx = read_txt('./Test_Cases/design.txt')
 
-# GenBank: M28829.1 Rep proteins from Plasmid RSF1010 from same Plasmid family as R1162 (IncQ)
+L = 5000
+step = 50
+OriC = OriFinder(dna,L,step)
+coords, at = genome_at_signal(OriC, L=80, step=5)
 
-# Origin Binding Initiator
-RepC = "GTGGTGAAGCCTAAGAACAAGCACAGCCTCAGCCACGTCCGGCACGACCCGGCGCACTGTCTGGCCCCCGGCCTGTTCCGTGCCCTCAAGCGGGGCGAGCGCAAGCGCAGCAAGCTGGACGTGACGTATGACTACGGCGACGGCAAGCGGATCGAGTTCAGCGGCCCGGAGCCGCTGGGCGCTGATGATCTGCGCATCCTGCAAGGGCTGGTGGCCATGGCTGGGCCTAATGGCCTAGTGCTTGGCCCGGAACCCAAGACCGAAGGCGGACGGCAGCTCCGGCTGTTCCTGGAACCCAAGTGGGAGGCCGTCACCGCTGAATGCCATGTGGTCAAAGGTAGCTATCGGGCGCTGGCAAAGGAAATCGGGGCAGAGGTCGATAGTGGTGGGGCGCTCAAGCACATACAGGACTGCATCGAGCGCCTTTGGAAGGTATCCATCATCGCCCAGAATGGCCGCAAGCGGCAGGGGTTTCGGCTGCTGTCGGAGTACGCCAGCGACGAGGCGGACGGGCGCCTGTACGTGGCCCTGAACCCCTTGATCGCGCAGGCCGTCATGGGTGGCGGCCAGCATGTGCGCATCAGCATGGACGAGGTGCGGGCGCTGGACAGCGAAACCGCCCGCCTGCTGCACCAGCGGCTGTGTGGCTGGATCGACCCCGGCAAAACCGGCAAGGCTTCCATAGATACCTTGTGCGGCTATGTCTGGCCGTCAGAGGCCAGTGGTTCGACCATGCGCAAGCGCCGCCAGCGGGTGCGCGAGGCGTTGCCGGAGCTGGTCGCGCTGGGCTGGACGGTAACCGAGTTCGCGGCGGGCAAGTACGACATCACCCGGCCCAAGGCGGCAGGCTGA"
-# Helicase
-RepA = "ATGGCTACCCATAAGCCTATCAATATTCTGGAGGCGTTCGCAGCAGCGCCGCCACCGCTGGACTACGTTTTGCCCAACATGGTGGCCGGTACGGTCGGGGCGCTGGTGTCGCCCGGTGGTGCCGGTAAATCCATGCTGGCCCTGCAACTGGCCGCACAGATTGCAGGCGGGCCGGATCTGCTGGAGGTGGGCGAACTGCCCACCGGCCCGGTGATCTACCTGCCCGCCGAAGACCCGCCCACCGCCATTCATCACCGCCTGCACGCCCTTGGGGCGCACCTCAGCGCCGAGGAACGGCAAGCCGTGGCTGACGGCCTGCTGATCCAGCCGCTGATCGGCAGCCTGCCCAACATCATGGCCCCGGAGTGGTTCGACGGCCTCAAGCGCGCCGCCGAGGGCCGCCGCCTGATGGTGCTGGACACGCTGCGCCGGTTCCACATCGAGGAAGAAAACGCCAGCGGCCCCATGGCCCAGGTCATCGGTCGCATGGAGGCCATCGCCGCCGATACCGGGTGCTCTATCGTGTTCCTGCACCATGCCAGCAAGGGCGCGGCCATGATGGGCGCAGGCGACCAGCAGCAGGCCAGCCGGGGCAGCTCGGTACTGGTCGATAACATCCGCTGGCAGTCCTACCTGTCGAGCATGACCAGCGCCGAGGCCGAGGAATGGGGTGTGGACGACGACCAGCGCCGGTTCTTCGTCCGCTTCGGTGTGAGCAAGGCCAACTATGGCGCACCGTTCGCTGATCGGTGGTTCAGGCGGCATGACGGCGGGGTGCTCAAGCCCGCCGTGCTGGAGAGGCAGCGCAAGAGCAAGGGGGTGCCCCGTGGTGAAGCCTAA"
-# Primase
-RepB = "ATGAAGAACGACAGGACTTTGCAGGCCATAGGCCGACAGCTCAAGGCCATGGGCTGTGAGCGCTTCGATATCGGCGTCAGGGACGCCACCACCGGCCAGATGATGAACCGGGAATGGTCAGCCGCCGAAGTGCTCCAGAACACGCCATGGCTCAAGCGGATGAATGCCCAGGGCAATGACGTGTATATCAGGCCCGCCGAGCAGGAGCGGCATGGTCTGGTGCTGGTGGACGACCTCAGCGAGTTTGACCTGGATGACATGAAAGCCGAGGGCCGGGAGCCTGCCCTGGTAGTGGAAACCAGCCCGAAGAACTATCAGGCATGGGTCAAGGTGGCCGACGCCGCAGGCGGTGAACTTCGGGGGCAGATTGCCCGGACGCTGGCCAGCGAGTACGACGCCGACCCGGCCAGCGCCGACAGCCGCCACTATGGCCGCTTGGCGGGCTTCACCAACCGCAAGGACAAGCACACCACCCGCGCCGGTTATCAGCCGTGGGTGCTGCTGCGTGAATCCAAGGGCAAGACCGCCACCGCTGGCCCGGCGCTGGTGCAGCAGGCTGGCCAGCAGATCGAGCAGGCCCAGCGGCAGCAGGAGAAGGCCCGCAGGCTGGCCAGCCTCGAACTGCCCGAGCGGCAGCTTAGCCGCCACCGGCGCACGGCGCTGGACGAGTACCGCAGCGAGATGGCCGGGCTGGTCAAGCGCTTCGGTGATGACCTCAGCAAGTGCGACTTTATCGCCGCGCAGAAGCTGGCCAGCCGGGGCCGCAGTGCCGAGGAAATCGGCAAGGCCATGGCCGAGGCCAGCCCAGCGCTGGCAGAGCGCAAGCCCGGCCACGAAGCGGATTACATCGAGCGCACCGTCAGCAAGGTCATGGGTCTGCCCAGCGTCCAGCTTGCGCGGGCCGAGCTGGCACGGGCACCGGCACCCCGCCAGCGAGGCATGGACAGGGGCGGGCCAGATTTCAGCATGTAG"
-# DNA Origin of Transfer
+due_mid = find_due_mid(coords, at)
+
+ori_start = max(0, due_mid - 300)
+ori_end   = min(len(OriC), due_mid + 300)
+
+# Setting Ori as 300 bp upstream and downstream of midpoint of DNA Unwinding Element
+ORI = OriC[ori_start:ori_end]
+
+
+# DNA Origin of Transfer for plasmid R1162 (based on the paper)
 OriT = "GGCCAGTTTCTCGAAGAGAAACCGGTAAATGCGCCCTCCCCTACAAAGTAGGGTCGGGATTGCCGCCGCTGTGCCTCCATGATAGCCTACGAGACAGCACATTAACAATGGGGTGTCAAGATGGTTAAGGGGAGCAACAAGGCGGCGGATCGGCTGGCCA"
-
-dna = read_fasta('input.fa')
-re,abx = read_txt('design.txt')
 
 spacer_1 = generate_spacer(37,re.values())
 spacer_2 = generate_spacer(24,re.values())
@@ -206,13 +291,15 @@ spacer_4 = generate_spacer(29,re.values())
 ABXS = ab_markers(abx)
 MCS = mcs(re)
 
-plasmid_seq = OriV + RepC + RepA + RepB + spacer_1 + ABXS + spacer_2 + MCS + spacer_3 + OriT + spacer_4
-rep = final_plasmid_checker(OriV, RepA, RepB, RepC, ABXS, MCS, OriT, spacer_1, spacer_2, spacer_3, spacer_4, re, abx)
+# Constructing final plasmid sequence
+plasmid_seq = ORI + spacer_1 + ABXS + spacer_2 + MCS + spacer_3 + OriT + spacer_4
+rep = final_plasmid_checker(ORI, ABXS, MCS, OriT, spacer_1, spacer_2, spacer_3, spacer_4, re, abx)
+
+# Error handling
 if len(rep) == 3:
   print(rep)
 else:
   plasmid_seq = rep
-
-with open('Output.fa','w') as out:
-  out.write(">New Plasmid\n"+plasmid_seq)
+  with open('./Test_Cases/Output.fa','w') as out:
+    out.write(">New Plasmid\n"+plasmid_seq)
 
