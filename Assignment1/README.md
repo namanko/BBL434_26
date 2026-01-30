@@ -14,7 +14,10 @@ Before starting to code, it is important to make a structural design of the plas
    
 # The Code and Its Logic
 Starting with the Ori, I applied cumulative GC Skew to find a window where the Ori could be present. I am assuming a single Ori for simplicity.
-To further narrow down this window (5000 bases long) I did an AT% analysis to determine long contiguous sequences which generally point to DNA Unwinding Regions. I took the region 300 bp upstream and downstream of the midpoint of the longest contiguous window as my potential ori.
+To further narrow down this window (5000 bases long) I did an AT% analysis to determine long contiguous sequences which generally point to DNA Unwinding Regions.
+I took the region 300 bp upstream and downstream of the midpoint of the longest contiguous window as my potential ori.
+
+I earlier tried to narrow down the GC Skew window itself, and although it is closer to the actual ori, the window we get contains Restriction sites as it still has some extra portions. At this size, local AT trends would not have much biological significance. Thus, I took the simplest, safest approach to ensure there is no problem with the plasmid design.
 
 Having found a potential Ori, I moved on to merge all antibiotic markers in one string. I did not feel the need for spacers as promoter and terminator regions are already present.
 
